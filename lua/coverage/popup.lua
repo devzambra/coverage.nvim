@@ -1,12 +1,10 @@
 local api = vim.api
-local fn = vim.fn -- Asegurarnos de que fn está disponible si se usa
-
 local M = {}
 
 -- Configuración por defecto
 local config = {
-	width = 160, -- Ancho que teníamos
-	height = 20, -- Alto que teníamos
+	width = 120,
+	height = 20,
 	border = "rounded",
 }
 
@@ -89,21 +87,30 @@ local function format_line(item)
 		end
 	end
 
-	local statements = tonumber(item.statements_score or "0") or 0
-	local branches = tonumber(item.branches_score or "0") or 0
-	local functions = tonumber(item.functions_score or "0") or 0
+	local function combine_uncovered(lines, funcs)
+		if not lines or lines == "" then
+			lines = nil
+		end
+		if not funcs or funcs == "" then
+			funcs = nil
+		end
+		
+		if lines and funcs then
+			return lines .. ", " .. funcs
+		elseif lines then
+			return lines
+		elseif funcs then
+			return funcs
+		else
+			return "✓"
+		end
+	end
 
 	local uncovered_text
 	if item.file == "__SUMMARY_PLACEHOLDER__" then
 		uncovered_text = "-" -- Para la línea de resumen
 	else
-		-- Depuración específica para uncovered_lines (Comentado)
-		-- if item.file and not string.find(item.file, "__SUMMARY_PLACEHOLDER__") then
-		--   local val_type = type(item.uncovered_lines)
-		--   local val_print = val_type == "string" and ("\"%s\""):format(item.uncovered_lines) or tostring(item.uncovered_lines)
-		--   print(string.format("DEBUG_UNCOVERED: File: %s - Uncovered Lines Value: %s (Type: %s)", item.file, val_print, val_type))
-		-- end
-		uncovered_text = (item.uncovered_lines and item.uncovered_lines ~= "" and item.uncovered_lines) or "✓"
+		uncovered_text = combine_uncovered(item.uncovered_lines, item.uncovered_functions)
 	end
 
 	return {
