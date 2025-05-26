@@ -10,11 +10,13 @@ By default, it will highlight lines in your code when you open a file based on c
 - Using Lazy:
 
 ```lua
-  {
-    "devzambra/coverage.nvim",
-    config = function()
-      require("coverage").setup()
-    end,
+  return {
+    {
+      "devzambra/coverage.nvim",
+      config = function()
+        require("coverage").setup()
+      end,
+    }
   }
 ```
 
@@ -23,7 +25,12 @@ By default, it will highlight lines in your code when you open a file based on c
 - Supports lcov format
 - Displays coverage data in a user-friendly format
 - Highlights uncovered, covered and partially covered lines
+
+![Highlights](./images/highlights.png)
+
 - Summary window with overall coverage statistics
+
+![Summary Window](./images/summary_popup.png)
 
 ## Default keymaps
 

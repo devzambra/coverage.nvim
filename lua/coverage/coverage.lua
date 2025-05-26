@@ -356,45 +356,112 @@ function M.show_coverage_summary()
 			})
 
 			-- Preparar las líneas no cubiertas
-			local uncovered_lines_numbers = {} -- Inicializar como tabla vacía PARA ESTE ARCHIVO
-			if stats.line_hits and type(stats.line_hits) == "table" then -- Iterar sobre stats.line_hits
-				for line_num, hits in pairs(stats.line_hits) do
-					if hits == 0 then
-						table.insert(uncovered_lines_numbers, tonumber(line_num))
-					end
+			local function get_uncovered_ranges(numbers)
+				if not numbers or #numbers == 0 then
+					return {}
 				end
-			end
 
-			-- Ordenar las líneas numéricamente
-			table.sort(uncovered_lines_numbers)
-
-			-- Formatear las líneas no cubiertas en rangos
-			local uncovered_ranges = {}
-			if #uncovered_lines_numbers > 0 then -- Usar uncovered_lines_numbers
-				local start_range = uncovered_lines_numbers[1] -- Usar uncovered_lines_numbers
+				table.sort(numbers)
+				local ranges = {}
+				local start_range = numbers[1]
 				local prev_line = start_range
 
-				for i = 2, #uncovered_lines_numbers do -- Usar uncovered_lines_numbers
-					local current = uncovered_lines_numbers[i] -- Usar uncovered_lines_numbers
+				for i = 2, #numbers do
+					local current = numbers[i]
 					if current > prev_line + 1 then
-						-- El rango se ha roto, guardar el rango anterior
 						if start_range == prev_line then
-							table.insert(uncovered_ranges, tostring(start_range))
+							table.insert(ranges, tostring(start_range))
 						else
-							table.insert(uncovered_ranges, string.format("%d-%d", start_range, prev_line))
+							table.insert(ranges, string.format("%d-%d", start_range, prev_line))
 						end
 						start_range = current
 					end
 					prev_line = current
 				end
 
-				-- Agregar el último rango
 				if start_range == prev_line then
-					table.insert(uncovered_ranges, tostring(start_range))
+					table.insert(ranges, tostring(start_range))
 				else
-					table.insert(uncovered_ranges, string.format("%d-%d", start_range, prev_line))
+					table.insert(ranges, string.format("%d-%d", start_range, prev_line))
+				end
+
+				return ranges
+			end
+
+			-- Recopilar todas las líneas no cubiertas en un conjunto único
+			local uncovered_set = {}
+
+			-- Líneas no cubiertas
+			if stats.line_hits and type(stats.line_hits) == "table" then
+				for line_num, hits in pairs(stats.line_hits) do
+					if hits == 0 then
+						local num = tonumber(line_num)
+						if num then
+							uncovered_set[num] = true
+						end
+					end
 				end
 			end
+
+			-- Funciones no cubiertas (asegurarse de incluir las líneas de las funciones)
+			if stats.functions and type(stats.functions) == "table" and stats.functions.detailed then
+				for func_name, hits in pairs(stats.functions.detailed) do
+					if hits == 0 and stats.functions.lines and stats.functions.lines[func_name] then
+						local line = tonumber(stats.functions.lines[func_name])
+						if line then
+							uncovered_set[line] = true
+						end
+					end
+				end
+			end
+
+			-- Ramas no cubiertas
+			if stats.branches and type(stats.branches) == "table" then
+				for line_num, branch_info in pairs(stats.branches) do
+					if type(branch_info) == "table" and branch_info.not_taken and branch_info.not_taken > 0 then
+						local num = tonumber(line_num)
+						if num then
+							uncovered_set[num] = true
+						end
+					end
+				end
+			end
+
+			-- Convertir el conjunto a array y ordenar
+			local uncovered_lines = {}
+			for line in pairs(uncovered_set) do
+				table.insert(uncovered_lines, line)
+			end
+			table.sort(uncovered_lines)
+
+			-- Formatear rangos
+			local ranges = {}
+			if #uncovered_lines > 0 then
+				local start_range = uncovered_lines[1]
+				local prev_line = start_range
+
+				for i = 2, #uncovered_lines do
+					local current = uncovered_lines[i]
+					if current > prev_line + 1 then
+						if start_range == prev_line then
+							table.insert(ranges, tostring(start_range))
+						else
+							table.insert(ranges, string.format("%d-%d", start_range, prev_line))
+						end
+						start_range = current
+					end
+					prev_line = current
+				end
+
+				-- Añadir el último rango
+				if start_range == prev_line then
+					table.insert(ranges, tostring(start_range))
+				else
+					table.insert(ranges, string.format("%d-%d", start_range, prev_line))
+				end
+			end
+
+			local uncovered_display = (#ranges > 0) and table.concat(ranges, ",") or "✓"
 
 			-- Depuración para uncovered_lines en coverage_custom.lua (Comentado)
 			-- if file_path == "src/App.js" or string.find(file_path, "App.js") then -- Para asegurar que capturamos App.js
@@ -419,7 +486,7 @@ function M.show_coverage_summary()
 				statements_score = string.format("%.1f", p_statements), -- porcentaje de statements
 				branches_score = string.format("%.1f", p_branches), -- porcentaje de branches
 				functions_score = string.format("%.1f", p_functions), -- porcentaje de functions
-				uncovered_lines = table.concat(uncovered_ranges, ","), -- líneas no cubiertas
+				uncovered_lines = uncovered_display, -- líneas y funciones no cubiertas
 				search_text = search_text, -- texto optimizado para búsqueda
 			})
 
