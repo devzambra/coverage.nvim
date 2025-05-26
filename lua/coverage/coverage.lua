@@ -507,7 +507,7 @@ function M.show_coverage_summary()
 	-- print(vim.inspect(items))
 
 	-- Importar y usar el módulo coverage_popup
-	local coverage_popup = require("modules.coverage_popup")
+	local coverage_popup = require("coverage.popup")
 	coverage_popup.show(items) -- Llamada activa
 end
 return M
