@@ -266,14 +266,38 @@ local function setup_keymaps()
 	end)
 
 	map("/", function()
-		vim.ui.input({ prompt = "Search: " }, function(text)
-			if text then -- Solo actualizar si el usuario ingresa texto (no nil si cancela)
-				state.search_text = text
-				state.selected_idx = 1
-				filter_items()
-				update_buffer()
+		local search_items = {}
+		for _, item in ipairs(state.items) do
+			if item.file ~= "__SUMMARY_PLACEHOLDER__" then
+				-- Extraer solo el nombre del archivo
+				local filename = vim.fn.fnamemodify(item.file, ":t")
+				table.insert(search_items, {
+					name = filename,
+					file = item.file,
+					value = item.value,
+					display = string.format("%s (%s)", filename, item.uncovered_lines or "✓")
+				})
 			end
-		end)
+		end
+
+		vim.ui.select(
+			search_items,
+			{
+				prompt = "Search coverage files:",
+				format_item = function(item)
+					return item.display
+				end,
+				kind = "coverage_files"
+			},
+			function(choice)
+				if choice then
+					if choice.value and choice.value ~= "__SUMMARY_DO_NOT_EDIT__" then
+						api.nvim_win_close(state.winid, true)
+						vim.cmd("edit " .. choice.value)
+					end
+				end
+			end
+		)
 	end)
 end
 
