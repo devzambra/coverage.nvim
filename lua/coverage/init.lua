@@ -1,7 +1,6 @@
 local M = {}
 
 function M.setup()
-	-- Configura autocmds aquí si quieres
 	vim.api.nvim_create_autocmd("BufEnter", {
 		pattern = "*.tsx, *.ts, *.jsx, *.js",
 		callback = function()
