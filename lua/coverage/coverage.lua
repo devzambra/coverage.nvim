@@ -508,26 +508,6 @@ function M.show_coverage_summary()
 			local uncovered_branches_str = nums_to_ranges(uncovered_branches_num)
 			local uncovered_functions_str = nums_to_ranges(uncovered_functions_num)
 
-			-- Debug: notificar si hay uncovered para este archivo (temporal)
-			if
-				uncovered_lines_str ~= ""
-				or uncovered_statements_str ~= ""
-				or uncovered_branches_str ~= ""
-				or uncovered_functions_str ~= ""
-			then
-				vim.notify(
-					string.format(
-						"Coverage UNCV for %s -> L:%s S:%s B:%s F:%s",
-						file_path,
-						uncovered_lines_str,
-						uncovered_statements_str,
-						uncovered_branches_str,
-						uncovered_functions_str
-					),
-					vim.log.levels.INFO
-				)
-			end
-
 			-- Depuración para uncovered_lines en coverage_custom.lua (Comentado)
 			-- if file_path == "src/App.js" or string.find(file_path, "App.js") then -- Para asegurar que capturamos App.js
 			--   print(
@@ -648,28 +628,6 @@ function M.show_coverage_summary()
 
 	-- Importar y usar el módulo coverage_popup
 	local coverage_popup = require("coverage.popup")
-
-	-- Debug: notificar primeros items y sus campos uncovered para diagnóstico (temporal)
-	local debug_list = {}
-	local shown = 0
-	for _, it in ipairs(items) do
-		if it.file and it.file ~= "__SUMMARY_PLACEHOLDER__" then
-			table.insert(debug_list, {
-				file = it.file,
-				uncovered_lines = it.uncovered_lines,
-				uncovered_statements = it.uncovered_statements,
-				uncovered_branches = it.uncovered_branches,
-				uncovered_functions = it.uncovered_functions,
-			})
-			shown = shown + 1
-		end
-		if shown >= 8 then
-			break
-		end
-	end
-	if #debug_list > 0 then
-		vim.notify("Coverage popup debug: " .. vim.inspect(debug_list), vim.log.levels.INFO)
-	end
 
 	coverage_popup.show(items) -- Llamada activa
 end

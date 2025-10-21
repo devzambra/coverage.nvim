@@ -88,29 +88,47 @@ local function format_line(item)
 	end
 
 	local function combine_uncovered(lines, funcs)
-		if not lines or lines == "" then
-			lines = nil
+		-- Nuevo: aceptar múltiples tipos y formatear con prefijos L/S/B/F
+		local function is_blank(s)
+			return not s or s == ""
 		end
-		if not funcs or funcs == "" then
-			funcs = nil
+
+		local parts = {}
+		if not is_blank(lines) then
+			table.insert(parts, "L:" .. lines)
 		end
-		
-		if lines and funcs then
-			return lines .. ", " .. funcs
-		elseif lines then
-			return lines
-		elseif funcs then
-			return funcs
-		else
-			return "✓"
+		if not is_blank(funcs) then
+			-- 'funcs' aquí se usa para funciones; mantener prefijo F
+			table.insert(parts, "F:" .. funcs)
 		end
+		return (#parts > 0) and table.concat(parts, " | ") or "✓"
 	end
 
 	local uncovered_text
 	if item.file == "__SUMMARY_PLACEHOLDER__" then
 		uncovered_text = "-" -- Para la línea de resumen
 	else
-		uncovered_text = combine_uncovered(item.uncovered_lines, item.uncovered_functions)
+		-- Combinar múltiples tipos: lines, statements, branches, functions
+		local lines_str = type(item.uncovered_lines) == "string" and item.uncovered_lines or ""
+		local stmts_str = type(item.uncovered_statements) == "string" and item.uncovered_statements or ""
+		local branches_str = type(item.uncovered_branches) == "string" and item.uncovered_branches or ""
+		local funcs_str = type(item.uncovered_functions) == "string" and item.uncovered_functions or ""
+
+		local parts = {}
+		if lines_str ~= "" then
+			table.insert(parts, "L:" .. lines_str)
+		end
+		if stmts_str ~= "" and stmts_str ~= lines_str then
+			table.insert(parts, "S:" .. stmts_str)
+		end
+		if branches_str ~= "" then
+			table.insert(parts, "B:" .. branches_str)
+		end
+		if funcs_str ~= "" then
+			table.insert(parts, "F:" .. funcs_str)
+		end
+
+		uncovered_text = (#parts > 0) and table.concat(parts, " | ") or "✓"
 	end
 
 	return {
@@ -275,29 +293,25 @@ local function setup_keymaps()
 					name = filename,
 					file = item.file,
 					value = item.value,
-					display = string.format("%s (%s)", filename, item.uncovered_lines or "✓")
+					display = string.format("%s (%s)", filename, item.uncovered_lines or "✓"),
 				})
 			end
 		end
 
-		vim.ui.select(
-			search_items,
-			{
-				prompt = "Search coverage files:",
-				format_item = function(item)
-					return item.display
-				end,
-				kind = "coverage_files"
-			},
-			function(choice)
-				if choice then
-					if choice.value and choice.value ~= "__SUMMARY_DO_NOT_EDIT__" then
-						api.nvim_win_close(state.winid, true)
-						vim.cmd("edit " .. choice.value)
-					end
+		vim.ui.select(search_items, {
+			prompt = "Search coverage files:",
+			format_item = function(item)
+				return item.display
+			end,
+			kind = "coverage_files",
+		}, function(choice)
+			if choice then
+				if choice.value and choice.value ~= "__SUMMARY_DO_NOT_EDIT__" then
+					api.nvim_win_close(state.winid, true)
+					vim.cmd("edit " .. choice.value)
 				end
 			end
-		)
+		end)
 	end)
 end
 
