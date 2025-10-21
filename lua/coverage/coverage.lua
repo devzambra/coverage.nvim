@@ -60,7 +60,7 @@ local function define_highlight_groups()
 end
 
 -- Parsea lcov y devuelve tablas de cobertura por línea y ramas por línea
-local function parse_lcov(lcov_path, target_rel_path)
+local function parse_lcov(lcov_path, target_rel_path, target_abs_path)
 	local file = io.open(lcov_path, "r")
 	if not file then
 		vim.notify("No se encontró " .. lcov_path, vim.log.levels.ERROR)
@@ -71,24 +71,50 @@ local function parse_lcov(lcov_path, target_rel_path)
 	local branches = {}
 	local current_file = nil
 
+	-- Normalizar una ruta removiendo prefijo './'
+	local function normalize_path(p)
+		if not p then
+			return p
+		end
+		return p:gsub("^%./", "")
+	end
+
+	local norm_target_rel = normalize_path(target_rel_path or "")
+	local norm_target_abs = normalize_path(target_abs_path or "")
+
 	for line in file:lines() do
 		if line:match("^SF:") then
 			current_file = line:sub(4)
-		elseif current_file == target_rel_path then
-			if line:match("^DA:") then
-				local line_num, hits = line:match("^DA:(%d+),(%d+)")
-				if line_num and hits then
-					line_hits[tonumber(line_num)] = tonumber(hits)
-				end
-			elseif line:match("^BRDA:") then
-				local line_num, _, _, taken = line:match("^BRDA:(%d+),%d+,%d+,([-%d]+)")
-				if line_num then
-					local num = tonumber(line_num)
-					branches[num] = branches[num] or { total = 0, not_taken = 0 }
+		elseif current_file then
+			local norm_current = normalize_path(current_file)
 
-					branches[num].total = branches[num].total + 1
-					if taken == "-" or tonumber(taken) == 0 then
-						branches[num].not_taken = branches[num].not_taken + 1
+			local matches_target = false
+			if norm_current == norm_target_rel then
+				matches_target = true
+			elseif norm_current == norm_target_abs then
+				matches_target = true
+			elseif norm_target_rel ~= "" and norm_current:sub(-#norm_target_rel) == norm_target_rel then
+				-- Allow matching when LCOV uses absolute paths but target is relative
+				matches_target = true
+			end
+
+			if matches_target then
+				if line:match("^DA:") then
+					local line_num, hits = line:match("^DA:(%d+),(%d+)")
+					if line_num and hits then
+						line_hits[tonumber(line_num)] = tonumber(hits)
+					end
+				elseif line:match("^BRDA:") then
+					-- Capturar correctamente los cuatro campos de BRDA
+					local line_num, _block, _branch, taken = line:match("^BRDA:(%d+),(%d+),(%d+),([%d%-]+)")
+					if line_num then
+						local num = tonumber(line_num)
+						branches[num] = branches[num] or { total = 0, not_taken = 0 }
+
+						branches[num].total = branches[num].total + 1
+						if taken == "-" or tonumber(taken) == 0 then
+							branches[num].not_taken = branches[num].not_taken + 1
+						end
 					end
 				end
 			end
@@ -119,7 +145,8 @@ function M.apply_coverage_highlights()
 	local abs_file = vim.fn.expand("%:p")
 	local rel_file = abs_file:gsub(project_root .. "/", "")
 
-	local data = parse_lcov(lcov_file, rel_file)
+	-- Pass both relative and absolute paths so parse_lcov can match LCOV SF entries
+	local data = parse_lcov(lcov_file, rel_file, abs_file)
 	if not data or not data.lines then
 		vim.notify("No hay datos de cobertura para " .. rel_file, vim.log.levels.WARN)
 		return
@@ -234,30 +261,31 @@ function M.show_coverage_summary()
 					files_data[current_file_path].line_hits[line_num] = hits
 				end
 			elseif line:match("^BRDA:") then
-				local _, _, _, taken_str = line:match("^BRDA:(%d+),(%d+),(%d+),([%d%-]+)")
-				if taken_str then -- Asegurarse de que el grupo 'taken' fue capturado
+				local line_num_str, _block, _branch, taken_str = line:match("^BRDA:(%d+),(%d+),(%d+),([%d%-]+)")
+				if line_num_str then
+					local line_num = tonumber(line_num_str)
 					files_data[current_file_path].branches.total = files_data[current_file_path].branches.total + 1
-					if taken_str ~= "-" then
+					-- Asegurar estructura de detalles por línea
+					files_data[current_file_path].branches.details = files_data[current_file_path].branches.details
+						or {}
+					local binfo = files_data[current_file_path].branches.details[line_num]
+						or { total = 0, covered = 0, not_taken = 0 }
+					binfo.total = binfo.total + 1
+					if taken_str and taken_str ~= "-" then
 						local taken_num = tonumber(taken_str)
-						if taken_num then -- Conversión a número exitosa
-							if taken_num > 0 then
-								files_data[current_file_path].branches.covered = files_data[current_file_path].branches.covered
-									+ 1
-							end
-						-- Si taken_num es 0, no se cuenta como cubierta, lo cual es correcto.
+						if taken_num and taken_num > 0 then
+							files_data[current_file_path].branches.covered = files_data[current_file_path].branches.covered
+								+ 1
+							binfo.covered = binfo.covered + 1
 						else
-							-- taken_str no es "-" y no se pudo convertir a número. Esto es inesperado.
-							vim.notify(
-								string.format(
-									"Advertencia LCOV (BRDA): Valor 'taken' inesperado '%s' en archivo %s. Línea original: %s",
-									taken_str,
-									current_file_path,
-									line
-								),
-								vim.log.levels.WARN
-							)
+							-- taken == 0 -> branch not covered
+							binfo.not_taken = binfo.not_taken + 1
 						end
+					else
+						-- taken == '-' means not executed
+						binfo.not_taken = binfo.not_taken + 1
 					end
+					files_data[current_file_path].branches.details[line_num] = binfo
 				-- Si taken_str es "-", no se cuenta como cubierta, lo cual es correcto.
 				else
 					-- El patrón BRDA general coincidió, pero no se pudo capturar el valor 'taken'.
@@ -271,11 +299,22 @@ function M.show_coverage_summary()
 						vim.log.levels.WARN
 					)
 				end
+			elseif line:match("^FN:") then
+				-- FN:<line number>,<function name>
+				local fn_line_str, fn_name = line:match("^FN:(%d+),(.+)")
+				if fn_line_str and fn_name then
+					files_data[current_file_path].functions.lines = files_data[current_file_path].functions.lines or {}
+					files_data[current_file_path].functions.lines[fn_name] = tonumber(fn_line_str)
+				end
 			elseif line:match("^FNDA:") then
-				local hits_str = line:match("^FNDA:(%d+),.*")
-				if hits_str then
+				-- FNDA:<hits>,<function name>
+				local hits_str, fn_name = line:match("^FNDA:(%d+),(.+)")
+				if hits_str and fn_name then
 					local hits = tonumber(hits_str)
 					files_data[current_file_path].functions.total = files_data[current_file_path].functions.total + 1
+					files_data[current_file_path].functions.detailed = files_data[current_file_path].functions.detailed
+						or {}
+					files_data[current_file_path].functions.detailed[fn_name] = hits
 					if hits and hits > 0 then
 						files_data[current_file_path].functions.covered = files_data[current_file_path].functions.covered
 							+ 1
@@ -388,16 +427,20 @@ function M.show_coverage_summary()
 				return ranges
 			end
 
-			-- Recopilar todas las líneas no cubiertas en un conjunto único
-			local uncovered_set = {}
+			-- Preparar listas separadas de elementos no cubiertos por tipo
+			local uncovered_lines_num = {}
+			local uncovered_statements_num = {} -- En LCOV DA representa líneas; mantener para claridad
+			local uncovered_branches_num = {}
+			local uncovered_functions_num = {}
 
-			-- Líneas no cubiertas
+			-- Líneas (DA)
 			if stats.line_hits and type(stats.line_hits) == "table" then
 				for line_num, hits in pairs(stats.line_hits) do
 					if hits == 0 then
 						local num = tonumber(line_num)
 						if num then
-							uncovered_set[num] = true
+							table.insert(uncovered_lines_num, num)
+							table.insert(uncovered_statements_num, num) -- statements ~= lines in this simplified model
 						end
 					end
 				end
@@ -409,7 +452,7 @@ function M.show_coverage_summary()
 					if hits == 0 and stats.functions.lines and stats.functions.lines[func_name] then
 						local line = tonumber(stats.functions.lines[func_name])
 						if line then
-							uncovered_set[line] = true
+							table.insert(uncovered_functions_num, line)
 						end
 					end
 				end
@@ -417,31 +460,31 @@ function M.show_coverage_summary()
 
 			-- Ramas no cubiertas
 			if stats.branches and type(stats.branches) == "table" then
-				for line_num, branch_info in pairs(stats.branches) do
-					if type(branch_info) == "table" and branch_info.not_taken and branch_info.not_taken > 0 then
+				-- Los detalles por línea pueden estar en stats.branches.details
+				local branch_details = stats.branches.details or stats.branches
+				if branch_details and type(branch_details) == "table" then
+					for line_num, branch_info in pairs(branch_details) do
 						local num = tonumber(line_num)
-						if num then
-							uncovered_set[num] = true
+						if num and type(branch_info) == "table" then
+							if branch_info.not_taken and branch_info.not_taken > 0 then
+								table.insert(uncovered_branches_num, num)
+							end
 						end
 					end
 				end
 			end
 
-			-- Convertir el conjunto a array y ordenar
-			local uncovered_lines = {}
-			for line in pairs(uncovered_set) do
-				table.insert(uncovered_lines, line)
-			end
-			table.sort(uncovered_lines)
-
-			-- Formatear rangos
-			local ranges = {}
-			if #uncovered_lines > 0 then
-				local start_range = uncovered_lines[1]
+			-- Función auxiliar para convertir listados numéricos a rangos formateados
+			local function nums_to_ranges(numbers)
+				if not numbers or #numbers == 0 then
+					return ""
+				end
+				table.sort(numbers)
+				local ranges = {}
+				local start_range = numbers[1]
 				local prev_line = start_range
-
-				for i = 2, #uncovered_lines do
-					local current = uncovered_lines[i]
+				for i = 2, #numbers do
+					local current = numbers[i]
 					if current > prev_line + 1 then
 						if start_range == prev_line then
 							table.insert(ranges, tostring(start_range))
@@ -452,16 +495,38 @@ function M.show_coverage_summary()
 					end
 					prev_line = current
 				end
-
-				-- Añadir el último rango
 				if start_range == prev_line then
 					table.insert(ranges, tostring(start_range))
 				else
 					table.insert(ranges, string.format("%d-%d", start_range, prev_line))
 				end
+				return table.concat(ranges, ",")
 			end
 
-			local uncovered_display = (#ranges > 0) and table.concat(ranges, ",") or "✓"
+			local uncovered_lines_str = nums_to_ranges(uncovered_lines_num)
+			local uncovered_statements_str = nums_to_ranges(uncovered_statements_num)
+			local uncovered_branches_str = nums_to_ranges(uncovered_branches_num)
+			local uncovered_functions_str = nums_to_ranges(uncovered_functions_num)
+
+			-- Debug: notificar si hay uncovered para este archivo (temporal)
+			if
+				uncovered_lines_str ~= ""
+				or uncovered_statements_str ~= ""
+				or uncovered_branches_str ~= ""
+				or uncovered_functions_str ~= ""
+			then
+				vim.notify(
+					string.format(
+						"Coverage UNCV for %s -> L:%s S:%s B:%s F:%s",
+						file_path,
+						uncovered_lines_str,
+						uncovered_statements_str,
+						uncovered_branches_str,
+						uncovered_functions_str
+					),
+					vim.log.levels.INFO
+				)
+			end
 
 			-- Depuración para uncovered_lines en coverage_custom.lua (Comentado)
 			-- if file_path == "src/App.js" or string.find(file_path, "App.js") then -- Para asegurar que capturamos App.js
@@ -481,12 +546,20 @@ function M.show_coverage_summary()
 				text = s_compact_summary, -- texto para coincidir en la búsqueda
 				value = ensure_string(full_edit_path), -- valor que se devuelve al seleccionar
 				file = ensure_string(full_edit_path), -- ruta del archivo
-				desc = s_detailed_description, -- descripción detallada
+				-- Añadir información de uncovered directamente a la descripción para diagnóstico y visibilidad
+				desc = s_detailed_description
+					.. (uncovered_lines_str ~= "" and (" | L:" .. uncovered_lines_str) or "")
+					.. (uncovered_statements_str ~= "" and (" | S:" .. uncovered_statements_str) or "")
+					.. (uncovered_branches_str ~= "" and (" | B:" .. uncovered_branches_str) or "")
+					.. (uncovered_functions_str ~= "" and (" | F:" .. uncovered_functions_str) or ""), -- descripción detallada
 				_coverage_score = s_coverage_score, -- cobertura total para ordenamiento
 				statements_score = string.format("%.1f", p_statements), -- porcentaje de statements
 				branches_score = string.format("%.1f", p_branches), -- porcentaje de branches
 				functions_score = string.format("%.1f", p_functions), -- porcentaje de functions
-				uncovered_lines = uncovered_display, -- líneas y funciones no cubiertas
+				uncovered_lines = uncovered_lines_str, -- líneas no cubiertas (DA)
+				uncovered_statements = uncovered_statements_str, -- statements (mapeadas desde DA)
+				uncovered_branches = uncovered_branches_str, -- ramas no cubiertas
+				uncovered_functions = uncovered_functions_str, -- funciones no cubiertas
 				search_text = search_text, -- texto optimizado para búsqueda
 			})
 
@@ -575,6 +648,29 @@ function M.show_coverage_summary()
 
 	-- Importar y usar el módulo coverage_popup
 	local coverage_popup = require("coverage.popup")
+
+	-- Debug: notificar primeros items y sus campos uncovered para diagnóstico (temporal)
+	local debug_list = {}
+	local shown = 0
+	for _, it in ipairs(items) do
+		if it.file and it.file ~= "__SUMMARY_PLACEHOLDER__" then
+			table.insert(debug_list, {
+				file = it.file,
+				uncovered_lines = it.uncovered_lines,
+				uncovered_statements = it.uncovered_statements,
+				uncovered_branches = it.uncovered_branches,
+				uncovered_functions = it.uncovered_functions,
+			})
+			shown = shown + 1
+		end
+		if shown >= 8 then
+			break
+		end
+	end
+	if #debug_list > 0 then
+		vim.notify("Coverage popup debug: " .. vim.inspect(debug_list), vim.log.levels.INFO)
+	end
+
 	coverage_popup.show(items) -- Llamada activa
 end
 return M
